@@ -64,10 +64,17 @@ static void sgl_dump(struct qdma_sw_sg *sgl, unsigned int sgcnt)
 
 u64 rdtsc_gettime(void)
 {
-	unsigned int low, high;
-
-	asm volatile("rdtscp" : "=a" (low), "=d" (high));
-	return low | ((u64)high) << 32;
+#if defined(__i386__) || defined(__x86_64__)
+    unsigned int low, high;
+    asm volatile("rdtscp" : "=a" (low), "=d" (high));
+    return low | ((u64)high) << 32;
+#elif defined(__aarch64__) || defined(__arm__)
+    u64 cval;
+    asm volatile("mrs %0, cntvct_el0" : "=r" (cval));
+    return cval;
+#else
+#error "No high-resolution timer available for this architecture."
+#endif
 }
 
 int qdma_sgl_find_offset(struct qdma_request *req, struct qdma_sw_sg **sg_p,
