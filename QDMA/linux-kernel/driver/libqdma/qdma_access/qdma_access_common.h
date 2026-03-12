@@ -71,6 +71,12 @@ static inline uint32_t get_trailing_zeros(uint64_t value)
 
 #define FIELD_SHIFT(mask)       get_trailing_zeros(mask)
 #define FIELD_SET(mask, val)    ((val << FIELD_SHIFT(mask)) & mask)
+
+// If FIELD_GET is already defined, undefine it first
+#ifdef FIELD_GET
+#undef FIELD_GET
+#endif
+
 #define FIELD_GET(mask, reg)    ((reg & mask) >> FIELD_SHIFT(mask))
 
 
