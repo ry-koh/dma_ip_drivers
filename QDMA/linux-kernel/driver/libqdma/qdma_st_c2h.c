@@ -478,6 +478,8 @@ static int qdma_flq_refill(struct qdma_descq *descq, int idx, int count,
 int descq_st_c2h_read(struct qdma_descq *descq, struct qdma_request *req,
 			bool update_pidx, bool refill)
 {
+	struct xlnx_dma_dev *xdev = descq->xdev;
+	struct device *dev = &xdev->conf.pdev->dev;
 	struct qdma_sgt_req_cb *cb = qdma_req_cb_get(req);
 	struct qdma_flq *flq = (struct qdma_flq *)descq->flq;
 	unsigned int pidx = flq->pidx_pend;
@@ -489,6 +491,7 @@ int descq_st_c2h_read(struct qdma_descq *descq, struct qdma_request *req,
 	int i = 0, j = 0;
 	int rv = 0;
 	unsigned int copied = 0;
+	unsigned char pg_order = flq->desc_pg_order;
 
 	if (!fsgcnt)
 		return 0;
@@ -507,7 +510,9 @@ int descq_st_c2h_read(struct qdma_descq *descq, struct qdma_request *req,
 	while ((i < fsgcnt) && tsg) {
 		unsigned int flen = fsg->len;
 		unsigned char *faddr = page_address(fsg->pg) + fsg->offset;
-
+		dma_sync_single_for_cpu(dev, fsg->dma_addr, 
+				PAGE_SIZE << pg_order, DMA_FROM_DEVICE);
+		
 		foff = 0;
 
 		while (flen && tsg) {
@@ -583,6 +588,9 @@ int descq_st_c2h_read(struct qdma_descq *descq, struct qdma_request *req,
 		}
 	}
 
+	dma_sync_single_for_device(dev, fsg->dma_addr, 
+			PAGE_SIZE << pg_order, DMA_FROM_DEVICE);
+	
 	incr_cmpl_desc_cnt(descq, i);
 
 	if (refill && i)
