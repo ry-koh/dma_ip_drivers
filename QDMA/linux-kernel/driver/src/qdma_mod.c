@@ -1548,6 +1548,8 @@ static int probe_one(struct pci_dev *pdev, const struct pci_device_id *id)
 	struct qdma_dev_conf conf;
 	struct xlnx_pci_dev *xpdev = NULL;
 	unsigned long dev_hndl;
+	struct xlnx_dma_dev *xdev;
+	unsigned int qmax;
 	int rv;
 #ifdef __x86_64__
 	pr_info("%s: func 0x%x, p/v %d/%d,0x%p.\n",
@@ -1627,6 +1629,14 @@ static int probe_one(struct pci_dev *pdev, const struct pci_device_id *id)
 		if (rv < 0)
 			goto close_device;
 	}
+
+	xdev = (struct xlnx_dma_dev *)dev_hndl;
+	qmax = xdev->dev_cap.num_qs;
+	rv = qdma_set_qmax(dev_hndl, -1, qmax);
+	if (!rv)
+		xpdev_qdata_realloc(xpdev, qmax);
+	else
+		goto close_device;
 
 	dev_set_drvdata(&pdev->dev, xpdev);
 
