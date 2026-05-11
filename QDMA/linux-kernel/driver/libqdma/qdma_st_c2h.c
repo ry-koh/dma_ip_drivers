@@ -22,8 +22,10 @@
 #include "qdma_descq.h"
 
 #include <asm/cacheflush.h>
+#include <asm/unaligned.h>
 #include <linux/kernel.h>
 #include <linux/delay.h>
+#include <linux/highmem.h>
 
 #include "qdma_device.h"
 #include "qdma_intr.h"
@@ -46,7 +48,7 @@ static inline void flq_free_one(struct qdma_sw_sg *sdesc,
 {
 	if (sdesc) {
 		if (sdesc->dma_addr) {
-			desc->dst_addr = 0UL;
+			desc->dst_addr = cpu_to_le64(0);
 			sdesc->dma_addr = 0UL;
 		}
 
@@ -109,7 +111,7 @@ static inline int flq_fill_one(struct qdma_descq *descq,
 	sdesc->offset = pg_sdesc->pg_offset;
 	sdesc->dma_addr = pg_sdesc->pg_dma_base_addr + pg_sdesc->pg_offset;
 	sdesc->len = descq->conf.c2h_bufsz;
-	desc->dst_addr = sdesc->dma_addr;
+	desc->dst_addr = cpu_to_le64(sdesc->dma_addr);
 #if KERNEL_VERSION(4, 6, 0) < LINUX_VERSION_CODE
 	page_ref_inc(pg_sdesc->pg_base);
 #else
@@ -420,6 +422,7 @@ static int qdma_flq_refill(struct qdma_descq *descq, int idx, int count,
 			int recycle, gfp_t gfp)
 {
 	struct qdma_flq *flq = (struct qdma_flq *)descq->flq;
+	struct device *dev = &descq->xdev->conf.pdev->dev;
 	struct qdma_sw_sg *sdesc = flq->sdesc + idx;
 	struct qdma_c2h_desc *desc = flq->desc + idx;
 	struct qdma_sdesc_info *sinfo = flq->sdesc_info + idx;
@@ -443,6 +446,10 @@ static int qdma_flq_refill(struct qdma_descq *descq, int idx, int count,
 		}
 
 		if (recycle) {
+			if (sdesc->dma_addr)
+				dma_sync_single_for_device(dev, sdesc->dma_addr,
+						descq->conf.c2h_bufsz,
+						DMA_FROM_DEVICE);
 			sdesc->len = descq->conf.c2h_bufsz;
 		} else {
 			flq_free_one(sdesc, desc);
@@ -457,6 +464,9 @@ static int qdma_flq_refill(struct qdma_descq *descq, int idx, int count,
 
 				break;
 			}
+			if (sdesc->dma_addr)
+				dma_sync_single_for_device(dev, sdesc->dma_addr,
+						sdesc->len, DMA_FROM_DEVICE);
 		}
 		sinfo->fbits = 0;
 		descq->avail++;
@@ -470,6 +480,26 @@ static int qdma_flq_refill(struct qdma_descq *descq, int idx, int count,
 	}
 
 	return i;
+}
+
+static void qdma_flq_sync_packet_for_cpu(struct qdma_descq *descq,
+		unsigned int idx, int count)
+{
+	struct qdma_flq *flq = (struct qdma_flq *)descq->flq;
+	struct device *dev = &descq->xdev->conf.pdev->dev;
+	struct qdma_sw_sg *sdesc = flq->sdesc + idx;
+	int i;
+
+	for (i = 0; i < count; i++, idx++, sdesc++) {
+		if (idx == flq->size) {
+			idx = 0;
+			sdesc = flq->sdesc;
+		}
+
+		if (sdesc->dma_addr && sdesc->len)
+			dma_sync_single_for_cpu(dev, sdesc->dma_addr,
+					sdesc->len, DMA_FROM_DEVICE);
+	}
 }
 
 /*
@@ -506,7 +536,14 @@ int descq_st_c2h_read(struct qdma_descq *descq, struct qdma_request *req,
 
 	while ((i < fsgcnt) && tsg) {
 		unsigned int flen = fsg->len;
-		unsigned char *faddr = page_address(fsg->pg) + fsg->offset;
+		unsigned char *fbase;
+		unsigned char *faddr;
+
+		if (fsg->dma_addr && flen)
+			dma_sync_single_for_cpu(&descq->xdev->conf.pdev->dev,
+					fsg->dma_addr, flen, DMA_FROM_DEVICE);
+		fbase = kmap_atomic(fsg->pg);
+		faddr = fbase + fsg->offset;
 
 		foff = 0;
 
@@ -514,22 +551,24 @@ int descq_st_c2h_read(struct qdma_descq *descq, struct qdma_request *req,
 			unsigned int toff = tsg->offset + tsgoff;
 			unsigned int copy = min_t(unsigned int, flen,
 						 tsg->len - tsgoff);
-			u64 *pkt_tx_time =
-			(u64 *)(page_address(fsg->pg) + fsg->offset);
+			u64 pkt_tx_time = get_unaligned((u64 *)(fbase +
+						fsg->offset));
 
 			if (!req->no_memcpy) {
-				memcpy(page_address(tsg->pg) + toff,
-				       faddr, copy);
+				unsigned char *tbase = kmap_atomic(tsg->pg);
+
+				memcpy(tbase + toff, faddr, copy);
+				kunmap_atomic(tbase);
 				flush_dcache_page(tsg->pg);
 			}
 			if (descq->conf.ping_pong_en &&
-				*pkt_tx_time == descq->ping_pong_tx_time) {
+				pkt_tx_time == descq->ping_pong_tx_time) {
 				u64 latency;
 
-				pr_debug("pkt tx_time=%llu\n", *pkt_tx_time);
+				pr_debug("pkt tx_time=%llu\n", pkt_tx_time);
 
 				latency = descq->ping_pong_rx_time -
-					*pkt_tx_time;
+					pkt_tx_time;
 
 				// calculate minimum latency
 				if (descq->xdev->ping_pong_lat_min > latency
@@ -554,9 +593,9 @@ int descq_st_c2h_read(struct qdma_descq *descq, struct qdma_request *req,
 				// sum of latencies for avg
 				descq->xdev->ping_pong_lat_total += latency;
 			} else if (descq->conf.ping_pong_en &&
-				*pkt_tx_time != descq->ping_pong_tx_time) {
+				pkt_tx_time != descq->ping_pong_tx_time) {
 				pr_err("Error: pkt tx=%llu descq->tx_time=%llu %p\n",
-					   *pkt_tx_time,
+					   pkt_tx_time,
 					   descq->ping_pong_tx_time,
 					   descq);
 			}
@@ -581,6 +620,7 @@ int descq_st_c2h_read(struct qdma_descq *descq, struct qdma_request *req,
 			foff = 0;
 			fsg = fsg->next;
 		}
+		kunmap_atomic(fbase);
 	}
 
 	incr_cmpl_desc_cnt(descq, i);
@@ -597,6 +637,7 @@ int descq_st_c2h_read(struct qdma_descq *descq, struct qdma_request *req,
 	if (i && update_pidx) {
 		i = ring_idx_decr(flq->pidx_pend, 1, flq->size);
 		descq->pidx_info.pidx = i;
+		dma_wmb();
 		rv = queue_pidx_update(descq->xdev, descq->conf.qidx,
 				descq->conf.q_type, &descq->pidx_info);
 		if (unlikely(rv < 0)) {
@@ -667,9 +708,15 @@ static inline bool is_new_cmpl_entry(struct qdma_descq *descq,
 
 int parse_cmpl_entry(struct qdma_descq *descq, struct qdma_ul_cmpt_info *cmpl)
 {
-	__be64 *cmpt = (__be64 *)descq->desc_cmpt_cur;
+	__le64 *cmpt = (__le64 *)descq->desc_cmpt_cur;
+	u64 cmpt0;
 
 	dma_rmb();
+#ifdef __READ_ONCE_DEFINED__
+	cmpt0 = le64_to_cpu(READ_ONCE(cmpt[0]));
+#else
+	cmpt0 = le64_to_cpu(cmpt[0]);
+#endif
 
 #if 0
 	print_hex_dump(KERN_INFO, "cmpl entry ", DUMP_PREFIX_OFFSET,
@@ -678,13 +725,13 @@ int parse_cmpl_entry(struct qdma_descq *descq, struct qdma_ul_cmpt_info *cmpl)
 #endif
 
 	cmpl->entry = cmpt;
-	cmpl->f.format = (cmpt[0] & F_C2H_CMPT_ENTRY_F_FORMAT) ? 1 : 0;
-	cmpl->f.color = (cmpt[0] & F_C2H_CMPT_ENTRY_F_COLOR) ? 1 : 0;
-	cmpl->f.err = (cmpt[0] & F_C2H_CMPT_ENTRY_F_ERR) ? 1 : 0;
-	cmpl->f.eot = (cmpt[0] & F_C2H_CMPT_ENTRY_F_EOT) ? 1 : 0;
-	cmpl->f.desc_used = (cmpt[0] & F_C2H_CMPT_ENTRY_F_DESC_USED) ? 1 : 0;
+	cmpl->f.format = (cmpt0 & F_C2H_CMPT_ENTRY_F_FORMAT) ? 1 : 0;
+	cmpl->f.color = (cmpt0 & F_C2H_CMPT_ENTRY_F_COLOR) ? 1 : 0;
+	cmpl->f.err = (cmpt0 & F_C2H_CMPT_ENTRY_F_ERR) ? 1 : 0;
+	cmpl->f.eot = (cmpt0 & F_C2H_CMPT_ENTRY_F_EOT) ? 1 : 0;
+	cmpl->f.desc_used = (cmpt0 & F_C2H_CMPT_ENTRY_F_DESC_USED) ? 1 : 0;
 	if (!cmpl->f.format && cmpl->f.desc_used) {
-		cmpl->len = (cmpt[0] >> S_C2H_CMPT_ENTRY_LENGTH) &
+		cmpl->len = (cmpt0 >> S_C2H_CMPT_ENTRY_LENGTH) &
 				M_C2H_CMPT_ENTRY_LENGTH;
 		/* zero length transfer allowed */
 	} else
@@ -763,7 +810,10 @@ static int rcv_pkt(struct qdma_descq *descq, struct qdma_ul_cmpt_info *cmpl,
 
 
 	if (descq->conf.fp_descq_c2h_packet) {
-		int rv = descq->conf.fp_descq_c2h_packet(descq->q_hndl,
+		int rv;
+
+		qdma_flq_sync_packet_for_cpu(descq, pidx, fl_nr);
+		rv = descq->conf.fp_descq_c2h_packet(descq->q_hndl,
 				descq->conf.quld, len, fl_nr, flq->sdesc + pidx,
 				descq->conf.cmpl_udd_en ?
 				(unsigned char *)cmpl->entry : NULL);
@@ -796,7 +846,11 @@ static int rcv_pkt(struct qdma_descq *descq, struct qdma_ul_cmpt_info *cmpl,
 int rcv_udd_only(struct qdma_descq *descq, struct qdma_ul_cmpt_info *cmpl)
 {
 #ifdef XMP_DISABLE_ST_C2H_CMPL
-	__be64 cmpt_entry = cmpl->entry[0];
+#ifdef __READ_ONCE_DEFINED__
+	u64 cmpt_entry = le64_to_cpu(READ_ONCE(cmpl->entry[0]));
+#else
+	u64 cmpt_entry = le64_to_cpu(cmpl->entry[0]);
+#endif
 #endif
 	struct qdma_flq *flq = (struct qdma_flq *)descq->flq;
 
@@ -815,8 +869,8 @@ int rcv_udd_only(struct qdma_descq *descq, struct qdma_ul_cmpt_info *cmpl)
 	}
 #ifdef XMP_DISABLE_ST_C2H_CMPL
 	if ((cmpt_entry & (1 << 20)) > 0) {
-		__be16 pkt_cnt = (cmpt_entry >> 32) & 0xFFFF;
-		__be16 pkt_len = (cmpt_entry >> 48) & 0xFFFF;
+		u16 pkt_cnt = (cmpt_entry >> 32) & 0xFFFF;
+		u16 pkt_len = (cmpt_entry >> 48) & 0xFFFF;
 		int i;
 
 		pr_info("pkt %u * %u.\n", pkt_len, pkt_cnt);
@@ -1018,7 +1072,7 @@ int descq_process_completion_st_c2h(struct qdma_descq *descq, int budget,
 	unsigned int rngsz_cmpt = qconf->rngsz_cmpt;
 	unsigned int pidx = descq->pidx;
 	unsigned int cidx_cmpt = descq->cidx_cmpt;
-	unsigned int pidx_cmpt = cs->pidx;
+	unsigned int pidx_cmpt = le16_to_cpu(cs->pidx);
 	struct qdma_flq *flq = (struct qdma_flq *)descq->flq;
 	unsigned int pidx_pend = flq->pidx_pend;
 	bool uld_handler = descq->conf.fp_descq_c2h_packet ? true : false;
@@ -1111,7 +1165,8 @@ int descq_process_completion_st_c2h(struct qdma_descq *descq, int budget,
 	if ((xdev->conf.intr_moderation) &&
 			(descq->cmpt_cidx_info.trig_mode ==
 					TRIG_MODE_COMBO)) {
-		pend = ring_idx_delta(cs->pidx, descq->cidx_cmpt, rngsz_cmpt);
+		pend = ring_idx_delta(le16_to_cpu(cs->pidx),
+				      descq->cidx_cmpt, rngsz_cmpt);
 		flq->pkt_cnt = pend;
 
 		/* we dont need interrupt if packets available for next read */
@@ -1144,7 +1199,8 @@ int descq_process_completion_st_c2h(struct qdma_descq *descq, int budget,
 			qdma_c2h_packets_proc_dflt(descq);
 		}
 
-		flq->pkt_cnt = ring_idx_delta(cs->pidx, descq->cidx_cmpt,
+		flq->pkt_cnt = ring_idx_delta(le16_to_cpu(cs->pidx),
+					      descq->cidx_cmpt,
 					      rngsz_cmpt);
 
 		/* some descq entries have been consumed */
@@ -1159,6 +1215,7 @@ int descq_process_completion_st_c2h(struct qdma_descq *descq, int budget,
 						     flq->size);
 				descq->pidx_info.pidx = pend;
 				if (!descq->conf.fp_descq_c2h_packet) {
+					dma_wmb();
 					ret = queue_pidx_update(descq->xdev,
 							descq->conf.qidx,
 							descq->conf.q_type,

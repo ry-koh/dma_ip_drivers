@@ -199,17 +199,14 @@ static void data_intr_aggregate(struct xlnx_dma_dev *xdev, int vidx, int irq,
 	}
 
 	do {
-		if ((xdev->version_info.ip_type == QDMA_VERSAL_HARD_IP) &&
-				(xdev->version_info.device_type ==
-				 QDMA_DEVICE_VERSAL_CPM4)) {
-			color = ring_entry->ring_cpm.coal_color;
-			intr_type = ring_entry->ring_cpm.intr_type;
-			qid = ring_entry->ring_cpm.qid;
-		} else {
-			color = ring_entry->ring_generic.coal_color;
-			intr_type = ring_entry->ring_generic.intr_type;
-			qid = ring_entry->ring_generic.qid;
-		}
+		u64 ring_word = qdma_intr_ring_word(ring_entry);
+		bool cpm = (xdev->version_info.ip_type == QDMA_VERSAL_HARD_IP) &&
+			   (xdev->version_info.device_type ==
+			    QDMA_DEVICE_VERSAL_CPM4);
+
+		color = qdma_intr_ring_color(ring_word);
+		intr_type = qdma_intr_ring_intr_type(ring_word, cpm);
+		qid = qdma_intr_ring_qid(ring_word, cpm);
 
 		if (color != coal_entry->color)
 			break;

@@ -1068,21 +1068,22 @@ static int32_t all_qdma_cpm4_hw_errs[
 
 
 
-union qdma_cpm4_ind_ctxt_cmd {
-	uint32_t word;
-	struct {
-		uint32_t busy:1;
-		uint32_t sel:4;
-		uint32_t op:2;
-		uint32_t qid:11;
-		uint32_t rsvd:14;
-	} bits;
-};
+#define QDMA_CPM4_IND_CTXT_CMD_SEL_MASK		GENMASK(4, 1)
+#define QDMA_CPM4_IND_CTXT_CMD_OP_MASK		GENMASK(6, 5)
+#define QDMA_CPM4_IND_CTXT_CMD_QID_MASK		GENMASK(17, 7)
+
+static inline uint32_t qdma_cpm4_ind_ctxt_cmd_build(uint16_t qid,
+		enum ind_ctxt_cmd_op op, enum ind_ctxt_cmd_sel sel)
+{
+	return FIELD_SET(QDMA_CPM4_IND_CTXT_CMD_QID_MASK, qid) |
+	       FIELD_SET(QDMA_CPM4_IND_CTXT_CMD_OP_MASK, op) |
+	       FIELD_SET(QDMA_CPM4_IND_CTXT_CMD_SEL_MASK, sel);
+}
 
 struct qdma_cpm4_indirect_ctxt_regs {
 	uint32_t qdma_ind_ctxt_data[QDMA_CPM4_IND_CTXT_DATA_NUM_REGS];
 	uint32_t qdma_ind_ctxt_mask[QDMA_CPM4_IND_CTXT_DATA_NUM_REGS];
-	union qdma_cpm4_ind_ctxt_cmd cmd;
+	uint32_t cmd;
 };
 
 static struct qctx_entry qdma_cpm4_sw_ctxt_entries[] = {
@@ -2050,16 +2051,13 @@ INSUF_BUF_EXIT:
 static int qdma_cpm4_indirect_reg_invalidate(void *dev_hndl,
 		enum ind_ctxt_cmd_sel sel, uint16_t hw_qid)
 {
-	union qdma_cpm4_ind_ctxt_cmd cmd;
+	uint32_t cmd;
 
 	qdma_reg_access_lock(dev_hndl);
 
 	/* set command register */
-	cmd.word = 0;
-	cmd.bits.qid = hw_qid;
-	cmd.bits.op = QDMA_CTXT_CMD_INV;
-	cmd.bits.sel = sel;
-	qdma_reg_write(dev_hndl, QDMA_CPM4_IND_CTXT_CMD_ADDR, cmd.word);
+	cmd = qdma_cpm4_ind_ctxt_cmd_build(hw_qid, QDMA_CTXT_CMD_INV, sel);
+	qdma_reg_write(dev_hndl, QDMA_CPM4_IND_CTXT_CMD_ADDR, cmd);
 
 	/* check if the operation went through well */
 	if (hw_monitor_reg(dev_hndl, QDMA_CPM4_IND_CTXT_CMD_ADDR,
@@ -2088,17 +2086,14 @@ static int qdma_cpm4_indirect_reg_invalidate(void *dev_hndl,
 static int qdma_cpm4_indirect_reg_clear(void *dev_hndl,
 		enum ind_ctxt_cmd_sel sel, uint16_t hw_qid)
 {
-	union qdma_cpm4_ind_ctxt_cmd cmd;
+	uint32_t cmd;
 
 	qdma_reg_access_lock(dev_hndl);
 
 	/* set command register */
-	cmd.word = 0;
-	cmd.bits.qid = hw_qid;
-	cmd.bits.op = QDMA_CTXT_CMD_CLR;
-	cmd.bits.sel = sel;
+	cmd = qdma_cpm4_ind_ctxt_cmd_build(hw_qid, QDMA_CTXT_CMD_CLR, sel);
 
-	qdma_reg_write(dev_hndl, QDMA_CPM4_IND_CTXT_CMD_ADDR, cmd.word);
+	qdma_reg_write(dev_hndl, QDMA_CPM4_IND_CTXT_CMD_ADDR, cmd);
 
 	/* check if the operation went through well */
 	if (hw_monitor_reg(dev_hndl, QDMA_CPM4_IND_CTXT_CMD_ADDR,
@@ -2129,16 +2124,13 @@ static int qdma_cpm4_indirect_reg_read(void *dev_hndl,
 		uint16_t hw_qid, uint32_t cnt, uint32_t *data)
 {
 	uint32_t index = 0, reg_addr = QDMA_CPM4_IND_CTXT_DATA_3_ADDR;
-	union qdma_cpm4_ind_ctxt_cmd cmd;
+	uint32_t cmd;
 
 	qdma_reg_access_lock(dev_hndl);
 
 	/* set command register */
-	cmd.word = 0;
-	cmd.bits.qid = hw_qid;
-	cmd.bits.op = QDMA_CTXT_CMD_RD;
-	cmd.bits.sel = sel;
-	qdma_reg_write(dev_hndl, QDMA_CPM4_IND_CTXT_CMD_ADDR, cmd.word);
+	cmd = qdma_cpm4_ind_ctxt_cmd_build(hw_qid, QDMA_CTXT_CMD_RD, sel);
+	qdma_reg_write(dev_hndl, QDMA_CPM4_IND_CTXT_CMD_ADDR, cmd);
 
 	/* check if the operation went through well */
 	if (hw_monitor_reg(dev_hndl, QDMA_CPM4_IND_CTXT_CMD_ADDR,
@@ -2187,10 +2179,7 @@ static int qdma_cpm4_indirect_reg_write(void *dev_hndl,
 		regs.qdma_ind_ctxt_mask[index] = 0xFFFFFFFF;
 	}
 
-	regs.cmd.word = 0;
-	regs.cmd.bits.qid = hw_qid;
-	regs.cmd.bits.op = QDMA_CTXT_CMD_WR;
-	regs.cmd.bits.sel = sel;
+	regs.cmd = qdma_cpm4_ind_ctxt_cmd_build(hw_qid, QDMA_CTXT_CMD_WR, sel);
 	reg_addr = QDMA_CPM4_IND_CTXT_DATA_3_ADDR;
 
 	for (index = 0;

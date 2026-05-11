@@ -21,6 +21,7 @@
 #define __QDMA_REGS_H__
 
 #include <linux/types.h>
+#include <asm/byteorder.h>
 #include "xdev.h"
 
 #define QDMA_REG_SZ_IN_BYTES	4
@@ -49,16 +50,16 @@
  */
 struct qdma_mm_desc {
 	/** source address */
-	__be64 src_addr;
+	__le64 src_addr;
 	/** flags */
-	__be32 flag_len;
+	__le32 flag_len;
 	/** reserved 32 bits */
-	__be32 rsvd0;
+	__le32 rsvd0;
 	/** destination address */
-	__be64 dst_addr;
+	__le64 dst_addr;
 	/** reserved 64 bits */
-	__be64 rsvd1;
-};
+	__le64 rsvd1;
+} __packed;
 
 #define S_DESC_F_DV		    28
 #define S_DESC_F_SOP		29
@@ -89,30 +90,30 @@ struct qdma_mm_desc {
  * @brief	memory mapped descriptor format
  */
 struct qdma_h2c_desc {
-	__be16 cdh_flags;	/**< cdh flags */
-	__be16 pld_len;		/**< current packet length */
-	__be16 len;			/**< total packet length */
-	__be16 flags;		/**< descriptor flags */
-	__be64 src_addr;	/**< source address */
-};
+	__le16 cdh_flags;	/**< cdh flags */
+	__le16 pld_len;		/**< current packet length */
+	__le16 len;		/**< total packet length */
+	__le16 flags;		/**< descriptor flags */
+	__le64 src_addr;	/**< source address */
+} __packed;
 
 /**
  * @struct - qdma_c2h_desc
  * @brief	qdma c2h descriptor
  */
 struct qdma_c2h_desc {
-	__be64 dst_addr;	/**< destination address */
-};
+	__le64 dst_addr;	/**< destination address */
+} __packed;
 
 /**
  * @struct - qdma_desc_cmpl_status
  * @brief	qdma writeback descriptor
  */
 struct qdma_desc_cmpl_status {
-	__be16 pidx;	/**< producer index */
-	__be16 cidx;	/**< consumer index */
-	__be32 rsvd;	/**< reserved 32 bits */
-};
+	__le16 pidx;	/**< producer index */
+	__le16 cidx;	/**< consumer index */
+	__le32 rsvd;	/**< reserved 32 bits */
+} __packed;
 
 #define S_C2H_CMPT_ENTRY_F_FORMAT		0
 #define F_C2H_CMPT_ENTRY_F_FORMAT		(1 << S_C2H_CMPT_ENTRY_F_FORMAT)
@@ -150,10 +151,10 @@ struct qdma_desc_cmpl_status {
  * @brief	qdma completion data descriptor
  */
 struct qdma_c2h_cmpt_cmpl_status {
-	__be16 pidx;				/**< producer index */
-	__be16 cidx;				/**< consumer index */
-	__be32 color_isr_status;	/**< isr color and status */
-};
+	__le16 pidx;				/**< producer index */
+	__le16 cidx;				/**< consumer index */
+	__le32 color_isr_status;	/**< isr color and status */
+} __packed;
 #define S_C2H_CMPT_F_COLOR	0
 
 #define S_C2H_CMPT_INT_STATE	1

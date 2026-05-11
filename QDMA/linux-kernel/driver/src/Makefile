@@ -125,7 +125,7 @@ $(MOD_NAME)-objs += $(LIBQDMA_OBJS)
 $(MOD_NAME)-objs += $(QDMA_ACCESS_OBJS)
 
 ifeq ($(ARCH),aarch64)
-    ARCH=arm64
+    override ARCH := arm64
 endif
 
 .PHONY: bin
@@ -133,9 +133,9 @@ bin:
 	@mkdir -p -m 755 $(bin_dir)
 	@rm -f $(MOD_NAME).ko $(bin_dir)/$(MOD_NAME).ko
 ifeq ($(CROSS_COMPILE_FLAG),)
-	@$(MAKE) symverfile=$(symverfile) KBUILD_EXTRA_SYMBOLS=$(extra_symb) -C $(KOBJ) M=$(shell pwd) modules
+	@$(MAKE) symverfile=$(symverfile) KBUILD_EXTRA_SYMBOLS=$(extra_symb) -C $(KOBJ) ARCH=$(ARCH) M=$(shell pwd) modules
 else
-	@$(MAKE) symverfile=$(symverfile) KBUILD_EXTRA_SYMBOLS=$(extra_symb) -C $(KOBJ)  CROSS_COMPILE=$(CROSS_COMPILE_FLAG) SUBDIRS=$(shell pwd) modules
+	@$(MAKE) symverfile=$(symverfile) KBUILD_EXTRA_SYMBOLS=$(extra_symb) -C $(KOBJ) ARCH=$(ARCH) CROSS_COMPILE=$(CROSS_COMPILE_FLAG) M=$(shell pwd) modules
 endif
 	@cp $(MOD_NAME).ko $(bin_dir)
 

@@ -130,9 +130,6 @@ ifeq ($(EQDMA_CPM5_10BIT_TAG_ENABLE),1)
   export EXTRA_FLAGS
 endif
 
-# Don't allow ARCH to overwrite the modified variable when passed to
-# the sub-makes.
-MAKEOVERRIDES := $(filter-out ARCH=%,$(MAKEOVERRIDES))
 # Don't allow CFLAGS/EXTRA_CFLAGS to clobber definitions in sub-make.
 MAKEOVERRIDES := $(filter-out CFLAGS=%,$(MAKEOVERRIDES))
 MAKEOVERRIDES := $(filter-out EXTRA_CFLAGS=%,$(MAKEOVERRIDES))
@@ -146,20 +143,10 @@ export KERNELRELEASE
 export KSRC
 export KOBJ
 export KINC
-# arm64 specific fix to include <ksrc>/arch/<karch> folder properly.
-# This hack is motivated by the RHEL7.X/CentOS7.X release where the
-# uname Architecture is indicated as "aarch64" but the real Architecture
-# source directory is "arm64"
 ifeq ($(ARCH),aarch64)
-  ifeq ($(wildcard $(KOBJ)/arch/$(ARCH)/Makefile),)
-    override MAKECMDGOALS = $(MAKECMDGOALS) "ARCH=arm64"
-    export ARCH
-  else
-    export ARCH
-  endif
-else
-  export ARCH
+  override ARCH := arm64
 endif
+export ARCH
 CFLAGS += -I$(srcdir)/src/libqdma/qdma_access
 CFLAGS += -I$(srcdir)/src/libqdma
 export FLAGS += $(CFLAGS)

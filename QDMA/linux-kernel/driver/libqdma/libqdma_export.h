@@ -369,7 +369,7 @@ struct qdma_ul_cmpt_info {
 	/**  Producer Index */
 	unsigned int pidx;
 	/**  Completion entry */
-	__be64 *entry;
+	__le64 *entry;
 };
 
 /**

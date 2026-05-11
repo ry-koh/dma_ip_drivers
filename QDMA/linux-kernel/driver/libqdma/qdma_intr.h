@@ -26,100 +26,56 @@
  */
 #include <linux/types.h>
 #include <linux/workqueue.h>
+#include <linux/bitops.h>
+#include <asm/byteorder.h>
 #include "qdma_descq.h"
 /**
  * forward declaration for xlnx_dma_dev
  */
 struct xlnx_dma_dev;
 
-/**
- * @struct - qdma_intr_ring_cpm
- * @brief	Interrupt ring entry definition for 2018.2 CPM release
+/*
+ * Interrupt aggregation ring entries are written by hardware. Keep the wire
+ * entry as one little-endian 64-bit word; C bitfield layout is not portable
+ * across ARM/x86 compilers or CPU endian modes.
  */
-struct qdma_intr_ring_cpm {
-	/** producer index. This is from Interrupt source.
-	 *  Cumulative pointer of total interrupt Aggregation
-	 *  Ring entry written
-	 */
-	__be64 pidx:16;
-	/** consumer index. This is from Interrupt source.
-	 *  Cumulative consumed pointer
-	 */
-	__be64 cidx:16;
-	/** source color. This is from Interrupt source.
-	 *  This bit inverts every time pidx wraps around
-	 *  and this field gets copied to color field of descriptor.
-	 */
-	__be64 s_color:1;
-	/** This is from Interrupt source.
-	 * Interrupt state, 0: CMPT_INT_ISR; 1: CMPT_INT_TRIG; 2: CMPT_INT_ARMED
-	 */
-	__be64 intr_satus:2;
-	/** error. This is from interrupt source
-	 *  {C2h_err[1:0], h2c_err[1:0]}
-	 */
-	__be64 error:4;
-	/**  11 reserved bits*/
-	__be64 rsvd:11;
-	/**  Is the interrupt raised due to error ?
-	 *   1: error interrupt; 0: non-error interrupt
-	 */
-	__be64 error_int:1;
-	/**  interrupt type, 0: H2C; 1: C2H*/
-	__be64 intr_type:1;
-	/**  This is from Interrupt source. Queue ID*/
-	__be64 qid:11;
-	/**  The color bit of the Interrupt Aggregation Ring.
-	 *   This bit inverts every time pidx wraps around on the
-	 *   Interrupt Aggregation Ring.
-	 */
-	__be64 coal_color:1;
-};
-
-/**
- * @struct - qdma_intr_ring_generic
- * @brief	Interrupt ring entry definition
- */
-struct qdma_intr_ring_generic {
-	/** producer index. This is from Interrupt source.
-	 *  Cumulative pointer of total interrupt Aggregation
-	 *  Ring entry written
-	 */
-	__be64 pidx:16;
-	/** consumer index. This is from Interrupt source.
-	 *  Cumulative consumed pointer
-	 */
-	__be64 cidx:16;
-	/** source color. This is from Interrupt source.
-	 *  This bit inverts every time pidx wraps around
-	 *  and this field gets copied to color field of descriptor.
-	 */
-	__be64 s_color:1;
-	/** This is from Interrupt source.
-	 * Interrupt state, 0: CMPT_INT_ISR; 1: CMPT_INT_TRIG; 2: CMPT_INT_ARMED
-	 */
-	__be64 intr_satus:2;
-	/** error. This is from interrupt source
-	 *  {C2h_err[1:0], h2c_err[1:0]}
-	 */
-	__be64 error:2;
-	/**  1 reserved bits*/
-	__be64 rsvd:1;
-	/**  interrupt type, 0: H2C; 1: C2H*/
-	__be64 intr_type:1;
-	/**  This is from Interrupt source. Queue ID*/
-	__be64 qid:24;
-	/**  The color bit of the Interrupt Aggregation Ring.
-	 *   This bit inverts every time pidx wraps around on the
-	 *   Interrupt Aggregation Ring.
-	 */
-	__be64 coal_color:1;
-};
-
 union qdma_intr_ring {
-	struct qdma_intr_ring_cpm ring_cpm;
-	struct qdma_intr_ring_generic ring_generic;
-};
+	__le64 word;
+} __packed;
+
+#define QDMA_INTR_RING_COAL_COLOR_MASK		BIT_ULL(63)
+#define QDMA_INTR_RING_CPM_INTR_TYPE_MASK	BIT_ULL(51)
+#define QDMA_INTR_RING_CPM_QID_MASK		GENMASK_ULL(62, 52)
+#define QDMA_INTR_RING_GENERIC_INTR_TYPE_MASK	BIT_ULL(38)
+#define QDMA_INTR_RING_GENERIC_QID_MASK		GENMASK_ULL(62, 39)
+
+static inline u64 qdma_intr_ring_word(const union qdma_intr_ring *entry)
+{
+#ifdef __READ_ONCE_DEFINED__
+	return le64_to_cpu(READ_ONCE(entry->word));
+#else
+	return le64_to_cpu(entry->word);
+#endif
+}
+
+static inline u8 qdma_intr_ring_color(u64 word)
+{
+	return (word & QDMA_INTR_RING_COAL_COLOR_MASK) ? 1 : 0;
+}
+
+static inline u8 qdma_intr_ring_intr_type(u64 word, bool cpm)
+{
+	return cpm ? ((word & QDMA_INTR_RING_CPM_INTR_TYPE_MASK) ? 1 : 0) :
+		     ((word & QDMA_INTR_RING_GENERIC_INTR_TYPE_MASK) ? 1 : 0);
+}
+
+static inline u32 qdma_intr_ring_qid(u64 word, bool cpm)
+{
+	if (cpm)
+		return (word & QDMA_INTR_RING_CPM_QID_MASK) >> 52;
+
+	return (word & QDMA_INTR_RING_GENERIC_QID_MASK) >> 39;
+}
 
 
 /*****************************************************************************/

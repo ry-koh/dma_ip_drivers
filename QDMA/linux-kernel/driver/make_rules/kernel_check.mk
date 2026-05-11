@@ -71,10 +71,18 @@ endif
 #  $(error NO utsrelease)
 #endif
 
-# Define architecture and target(for RPM).
-ARCH := $(shell uname -m)
+# Define architecture and target(for RPM).  Honor ARCH from the command line
+# or environment so external-module cross builds select the intended kernel
+# architecture instead of the build host architecture.
+HOST_ARCH := $(shell uname -m)
+ifeq ($(ARCH),)
+  override ARCH := $(HOST_ARCH)
+endif
 target := $(ARCH)
 override ARCH := $(shell echo $(ARCH) | sed 's/i.86/i386/')
+ifeq ($(ARCH),aarch64)
+  override ARCH := arm64
+endif
 ifeq ($(USER_ARCH),)
 
   ifeq ($(ARCH),ppc64le)
@@ -92,6 +100,9 @@ ifeq ($(USER_ARCH),)
 else
   # Honor the value of ARCH if specified by user.
   override ARCH := $(USER_ARCH)
+  ifeq ($(ARCH),aarch64)
+    override ARCH := arm64
+  endif
 endif
 
 # Functions.

@@ -1549,7 +1549,7 @@ static int probe_one(struct pci_dev *pdev, const struct pci_device_id *id)
 	struct xlnx_pci_dev *xpdev = NULL;
 	unsigned long dev_hndl;
 	int rv;
-#ifdef __x86_64__
+#ifdef CONFIG_PCI_IOV
 	pr_info("%s: func 0x%x, p/v %d/%d,0x%p.\n",
 		dev_name(&pdev->dev), PCI_FUNC(pdev->devfn),
 		pdev->is_physfn, pdev->is_virtfn, pdev->physfn);

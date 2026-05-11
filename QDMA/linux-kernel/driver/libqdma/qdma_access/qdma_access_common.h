@@ -164,16 +164,18 @@ enum ind_ctxt_cmd_sel {
 #define QDMA_REG_IND_CTXT_REG_COUNT                         8
 
 /* ------------------------ indirect register context fields -----------*/
-union qdma_ind_ctxt_cmd {
-	uint32_t word;
-	struct {
-		uint32_t busy:1;
-		uint32_t sel:4;
-		uint32_t op:2;
-		uint32_t qid:12;
-		uint32_t rsvd:14;
-	} bits;
-};
+#define QDMA_IND_CTXT_CMD_BUSY_MASK	BIT(0)
+#define QDMA_IND_CTXT_CMD_SEL_MASK	GENMASK(4, 1)
+#define QDMA_IND_CTXT_CMD_OP_MASK	GENMASK(6, 5)
+#define QDMA_IND_CTXT_CMD_QID_MASK	GENMASK(18, 7)
+
+static inline uint32_t qdma_ind_ctxt_cmd_build(uint16_t qid,
+		enum ind_ctxt_cmd_op op, enum ind_ctxt_cmd_sel sel)
+{
+	return FIELD_SET(QDMA_IND_CTXT_CMD_QID_MASK, qid) |
+	       FIELD_SET(QDMA_IND_CTXT_CMD_OP_MASK, op) |
+	       FIELD_SET(QDMA_IND_CTXT_CMD_SEL_MASK, sel);
+}
 
 #define QDMA_IND_CTXT_DATA_NUM_REGS                         8
 
@@ -183,7 +185,7 @@ union qdma_ind_ctxt_cmd {
 struct qdma_indirect_ctxt_regs {
 	uint32_t qdma_ind_ctxt_data[QDMA_IND_CTXT_DATA_NUM_REGS];
 	uint32_t qdma_ind_ctxt_mask[QDMA_IND_CTXT_DATA_NUM_REGS];
-	union qdma_ind_ctxt_cmd cmd;
+	uint32_t cmd;
 };
 
 /**

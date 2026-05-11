@@ -2279,16 +2279,13 @@ INSUF_BUF_EXIT:
 static int qdma_indirect_reg_invalidate(void *dev_hndl,
 		enum ind_ctxt_cmd_sel sel, uint16_t hw_qid)
 {
-	union qdma_ind_ctxt_cmd cmd;
+	uint32_t cmd;
 
 	qdma_reg_access_lock(dev_hndl);
 
 	/* set command register */
-	cmd.word = 0;
-	cmd.bits.qid = hw_qid;
-	cmd.bits.op = QDMA_CTXT_CMD_INV;
-	cmd.bits.sel = sel;
-	qdma_reg_write(dev_hndl, QDMA_OFFSET_IND_CTXT_CMD, cmd.word);
+	cmd = qdma_ind_ctxt_cmd_build(hw_qid, QDMA_CTXT_CMD_INV, sel);
+	qdma_reg_write(dev_hndl, QDMA_OFFSET_IND_CTXT_CMD, cmd);
 
 	/* check if the operation went through well */
 	if (hw_monitor_reg(dev_hndl, QDMA_OFFSET_IND_CTXT_CMD,
@@ -2317,16 +2314,13 @@ static int qdma_indirect_reg_invalidate(void *dev_hndl,
 static int qdma_indirect_reg_clear(void *dev_hndl,
 		enum ind_ctxt_cmd_sel sel, uint16_t hw_qid)
 {
-	union qdma_ind_ctxt_cmd cmd;
+	uint32_t cmd;
 
 	qdma_reg_access_lock(dev_hndl);
 
 	/* set command register */
-	cmd.word = 0;
-	cmd.bits.qid = hw_qid;
-	cmd.bits.op = QDMA_CTXT_CMD_CLR;
-	cmd.bits.sel = sel;
-	qdma_reg_write(dev_hndl, QDMA_OFFSET_IND_CTXT_CMD, cmd.word);
+	cmd = qdma_ind_ctxt_cmd_build(hw_qid, QDMA_CTXT_CMD_CLR, sel);
+	qdma_reg_write(dev_hndl, QDMA_OFFSET_IND_CTXT_CMD, cmd);
 
 	/* check if the operation went through well */
 	if (hw_monitor_reg(dev_hndl, QDMA_OFFSET_IND_CTXT_CMD,
@@ -2356,16 +2350,13 @@ static int qdma_indirect_reg_read(void *dev_hndl, enum ind_ctxt_cmd_sel sel,
 		uint16_t hw_qid, uint32_t cnt, uint32_t *data)
 {
 	uint32_t index = 0, reg_addr = QDMA_OFFSET_IND_CTXT_DATA;
-	union qdma_ind_ctxt_cmd cmd;
+	uint32_t cmd;
 
 	qdma_reg_access_lock(dev_hndl);
 
 	/* set command register */
-	cmd.word = 0;
-	cmd.bits.qid = hw_qid;
-	cmd.bits.op = QDMA_CTXT_CMD_RD;
-	cmd.bits.sel = sel;
-	qdma_reg_write(dev_hndl, QDMA_OFFSET_IND_CTXT_CMD, cmd.word);
+	cmd = qdma_ind_ctxt_cmd_build(hw_qid, QDMA_CTXT_CMD_RD, sel);
+	qdma_reg_write(dev_hndl, QDMA_OFFSET_IND_CTXT_CMD, cmd);
 
 	/* check if the operation went through well */
 	if (hw_monitor_reg(dev_hndl, QDMA_OFFSET_IND_CTXT_CMD,
@@ -2412,10 +2403,7 @@ static int qdma_indirect_reg_write(void *dev_hndl, enum ind_ctxt_cmd_sel sel,
 		regs.qdma_ind_ctxt_mask[index] = 0xFFFFFFFF;
 	}
 
-	regs.cmd.word = 0;
-	regs.cmd.bits.qid = hw_qid;
-	regs.cmd.bits.op = QDMA_CTXT_CMD_WR;
-	regs.cmd.bits.sel = sel;
+	regs.cmd = qdma_ind_ctxt_cmd_build(hw_qid, QDMA_CTXT_CMD_WR, sel);
 	reg_addr = QDMA_OFFSET_IND_CTXT_DATA;
 
 	for (index = 0; index < ((2 * QDMA_IND_CTXT_DATA_NUM_REGS) + 1);
