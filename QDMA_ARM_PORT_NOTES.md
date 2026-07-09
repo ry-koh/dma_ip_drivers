@@ -189,7 +189,9 @@ to a specific data-corruption symptom seen during testing.
 ## Suggested follow-ups
 
 - Extended testing on ARM64 once hardware is available.
-- Audit other architecture-specific assumptions in the DPDK reference
-  driver (`QDMA/DPDK`) and Windows driver (`QDMA/windows`), which were
-  not touched by this port (confirmed — no commits in this diff touch
-  those directories).
+- Test on other ARM boards/SoCs (e.g. a different Jetson model, or a
+  non-Jetson ARM64 platform). Validation so far is limited to a single
+  board (Jetson Orin Nano) — success there does not confirm the same
+  code path works correctly on other ARM64 hardware, which may differ
+  in kernel version, PCIe root complex implementation, or cache/DMA
+  coherency behavior.
