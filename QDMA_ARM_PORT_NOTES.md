@@ -68,13 +68,34 @@ Added an `#ifdef FIELD_GET / #undef FIELD_GET / #endif` guard immediately
 before the driver's own `FIELD_GET` macro definition.
 
 **Purpose:**
-On the ARM build, `FIELD_GET` was already defined as a macro before
-this driver header's own definition was reached (via the kernel header
-include chain), causing a macro-redefinition conflict. The
-`#undef`/redefine guard clears the existing definition first so the
-driver's own `FIELD_GET` (with its own semantics, defined via
-`FIELD_SHIFT`/the mask-based shift above it) takes effect instead of
-whichever `FIELD_GET` the kernel headers pulled in.
+`FIELD_GET` was already defined as a macro before this driver header's
+own definition was reached (via the kernel header include chain),
+causing a macro-redefinition conflict. The `#undef`/redefine guard
+clears the existing definition first so the driver's own `FIELD_GET`
+(with its own semantics, defined via `FIELD_SHIFT`/the mask-based shift
+above it) takes effect instead of whichever `FIELD_GET` the kernel
+headers pulled in.
+
+This surfaced during the ARM/Jetson build, but the underlying cause is
+**kernel version, not architecture**: on Linux kernel ≥6.9, nearly every
+kernel header transitively pulls in `<linux/bitfield.h>` (via
+`<linux/fortify-string.h>`, added for `FORTIFY_SOURCE` support), and
+that header defines its own `FIELD_GET`. Kernels ≤6.8 don't hit this
+because that include path didn't exist yet. This is documented
+upstream by AMD in
+[Xilinx/dma_ip_drivers#395](https://github.com/Xilinx/dma_ip_drivers/issues/395),
+which reports the same collision on RHEL 10, AlmaLinux/Rocky 10
+(kernel 6.12), and Ubuntu 24.04 HWE (kernel 6.17) — none of which are
+ARM. It just happened to surface here because the Jetson/ARM build in
+this project used a kernel ≥6.9, while the x86_64 environment this
+driver was previously validated against did not.
+
+Xilinx's own proposed fix in #395 is different in scope: renaming the
+driver's `FIELD_GET`/`FIELD_SET`/`FIELD_SHIFT` macros to namespaced
+versions (`QDMA_FIELD_GET`, etc.) across roughly 1,000 call sites in
+the shared `qdma_access` code used by the Linux, Windows, and DPDK
+drivers. The `#undef`/redefine guard used here is a smaller, local
+workaround for the same collision, not that fix.
 
 ---
 
@@ -88,15 +109,19 @@ block to after `qdma_regs.h`, `qdma_access_errors.h`,
 `<linux/errno.h>`, and `<linux/delay.h>`.
 
 **Purpose:**
-This reorder is tied to change #2 above. `qdma_platform.h` was being
-included before `qdma_regs.h`/`qdma_access_errors.h`, which meant the
-`FIELD_GET` `#undef`/redefine guard (in `qdma_access_common.h`, pulled
-in via this chain) ran before the kernel's own `FIELD_GET` definition
-was in scope — so there was nothing yet to `#undef`, and the driver's
-redefinition would not actually take effect as intended. Moving the
-`qdma_platform.h` include after the other headers ensures the kernel's
-`FIELD_GET` is already defined by the time the guard in change #2 runs,
-so the `#undef`/redefine actually takes effect.
+This reorder is tied to change #2 above and the same kernel-version
+root cause described there (kernel ≥6.9 pulling in `<linux/bitfield.h>`
+via `<linux/fortify-string.h>`; see
+[Xilinx/dma_ip_drivers#395](https://github.com/Xilinx/dma_ip_drivers/issues/395)).
+`qdma_platform.h` was being included before `qdma_regs.h`/
+`qdma_access_errors.h`, which meant the `FIELD_GET` `#undef`/redefine
+guard (in `qdma_access_common.h`, pulled in via this chain) ran before
+the kernel's own `FIELD_GET` definition was in scope — so there was
+nothing yet to `#undef`, and the driver's redefinition would not
+actually take effect as intended. Moving the `qdma_platform.h` include
+after the other headers ensures the kernel's `FIELD_GET` is already
+defined by the time the guard in change #2 runs, so the
+`#undef`/redefine actually takes effect.
 
 ---
 
