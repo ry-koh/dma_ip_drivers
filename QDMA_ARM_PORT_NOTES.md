@@ -195,3 +195,81 @@ to a specific data-corruption symptom seen during testing.
   code path works correctly on other ARM64 hardware, which may differ
   in kernel version, PCIe root complex implementation, or cache/DMA
   coherency behavior.
+---
+
+## 6. ARM64 runtime barrier fixes applied to `driver-src/`
+
+**Files:** `libqdma/qdma_descq.c`, `libqdma/qdma_intr.c`
+
+Three `dma_rmb()` / `dma_wmb()` calls were absent from the `driver-src/` codebase and were added at the start of extended testing:
+
+1. **`dma_rmb()` in `descq_mm_n_h2c_cmpl_status()`** — inside the `#ifdef __READ_ONCE_DEFINED__` branch, before the completion status value is used. Ensures the DMA-written status is visible to the CPU before the driver acts on it.
+
+2. **`dma_wmb()` in `descq_mm_proc_request()`** — inserted before the call to `queue_pidx_update()`. Orders all descriptor writes to shared memory before the producer-index doorbell is written to the device.
+
+3. **`dma_rmb()` in `data_intr_aggregate()`** — inside the interrupt aggregation loop, before reading each ring entry. Ensures DMA-written ring entries are visible before the driver reads them.
+
+**Note:** Validation of these fixes was confounded by a probable hardware fault that emerged around the same time (see the hardware status section below). It is not possible to confirm independently that any of these changes were individually necessary or sufficient on the target platform.
+
+---
+
+## 7. Phase 2: `qdma_perf_mon.v` — hardware performance measurement IP
+
+A custom Verilog IP (`rtl/qdma_perf_mon.v`) was written to measure DMA throughput and latency for all four QDMA channel types (ST H2C, ST C2H, MM H2C, MM C2H) directly in FPGA fabric, without relying on software-side timing.
+
+**Interfaces:**
+
+- `s_axil_*` — AXI4-Lite slave, used by the test script to read/write control registers via `/dev/mem`
+- `s_axi_*` — AXI4 full slave, connected to QDMA's `M_AXI` port; accepts MM write bursts (discards data, sends BRESP) and handles MM read bursts (returns zeros); no external BRAM
+- `m_axis_h2c_*` — ST H2C sink (always asserts `tready`); captures latency from first `TVALID` to `TLAST`
+- `s_axis_c2h_*` — ST C2H source; generates `C2H_BEATS` full-width zero beats, then sends a completion
+
+**Parameters:** `DATA_WIDTH = 128` (16 bytes per beat), `AXI_ADDR_WIDTH = 64`, `AXI_ID_WIDTH = 4`
+
+**Register map (AXI4-Lite, 32-bit registers):**
+
+| Offset | Name | R/W | Description |
+|--------|------|-----|-------------|
+| 0x00 | CTRL | W | [0] = run, [1] = clear |
+| 0x04 | STATUS | R | [3:0] = {mm_c2h, mm_h2c, st_c2h, st_h2c}_done |
+| 0x08 | C2H_QID | RW | [10:0] queue ID for ST C2H generation |
+| 0x0C | C2H_BEATS | RW | [15:0] number of 128-bit beats to generate (max 4095) |
+| 0x10 | ST_H2C_LAT_LO | R | ST H2C latency cycles [31:0] |
+| 0x14 | ST_H2C_LAT_HI | R | ST H2C latency cycles [47:32] |
+| 0x18 | ST_H2C_BYTES | R | Total bytes received |
+| 0x1C | ST_H2C_BEATS | R | Total beats received |
+| 0x20 | ST_C2H_LAT_LO | R | ST C2H latency cycles [31:0] |
+| 0x24 | ST_C2H_LAT_HI | R | ST C2H latency cycles [47:32] |
+| 0x28 | ST_C2H_BYTES | R | Total bytes sent |
+| 0x2C | ST_C2H_BEATS | R | Total beats sent |
+| 0x30 | MM_H2C_LAT_LO | R | MM H2C latency cycles [31:0] (awvalid → bvalid+bready) |
+| 0x34 | MM_H2C_LAT_HI | R | [47:32] |
+| 0x38 | MM_H2C_BYTES | R | Total bytes written |
+| 0x3C | MM_H2C_BEATS | R | Total write beats |
+| 0x40 | MM_C2H_LAT_LO | R | MM C2H latency cycles [31:0] (arvalid → rlast+rready) |
+| 0x44 | MM_C2H_LAT_HI | R | [47:32] |
+| 0x48 | MM_C2H_BYTES | R | Total bytes read |
+| 0x4C | MM_C2H_BEATS | R | Total read beats |
+
+Latency counters are 48-bit (free-running at FPGA clock frequency, ~33-hour wrap at 250 MHz). The descriptor credit interface (`dsc_crdt_in`) was handled at the block design level via Constant IPs; it is not a port on `qdma_perf_mon.v`.
+
+---
+
+## 8. Phase 2 hardware test results
+
+Tested on Zynq UltraScale+ ZCU106 (EP) + Jetson Orin Nano (RC). Three of the four channels completed; ST C2H failed.
+
+| Channel | Throughput | Latency |
+|---------|-----------|---------|
+| ST H2C | 22.947 Gbps | 357 cycles |
+| MM H2C | 28.444 Gbps | 72 cycles |
+| MM C2H | 31.752 Gbps | 258 cycles |
+| ST C2H | FAIL — descriptor never fetched (cidx stayed at 0) | — |
+
+A subsequent test (v2) produced a PCIe error in `dmesg` (`AER: Uncorrected (Fatal) error received`, `SDES (First)`) with the device returning `0xFFFFFFFF` on all reads. The exact cause was not isolated; possible contributors include the credit dispenser configuration issuing continuous credits causing a queue overflow, a C2H abort timeout following the ST C2H descriptor fetch failure, or physical link degradation. The ZCU106 was subsequently retired due to hardware issues.
+
+---
+
+## 9. Hardware platform change — work unfinished
+
+After the ZCU106 was retired, work was attempted on a new hardware platform (Xilinx Versal VCK190 as EP, Nvidia Jetson NX as RC). The VCK190 could not be made to appear in `lspci` at all during the internship period. This work is unfinished and the PCIe enumeration problem was not resolved before the end of the internship.
