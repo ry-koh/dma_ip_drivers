@@ -13,6 +13,14 @@ ARM64 platform. Further work could not be completed before the end of
 the internship due to hardware issues unrelated to the driver code
 itself.
 
+Once the driver was working, a custom FPGA-side IP was built in two
+generations to exercise and then measure the link: an initial
+Streaming-mode loopback design (`qdma_app_2`, section 7) validated with
+host-side Python timing, followed by a hardware performance-counter IP
+(`qdma_perf_mon.v`, section 8) that measured all four QDMA channel
+types directly in fabric. Sections 7–8 draw on the results reported in
+the EG3611A interim report (reporting period 5 Jan – 22 May 2026).
+
 These five commits represent the complete diff between this fork's
 `master` branch and the last synced point with the Xilinx (AMD) upstream
 `dma_ip_drivers` repository (upstream commit `c510835`,
@@ -213,7 +221,78 @@ Three `dma_rmb()` / `dma_wmb()` calls were absent from the `driver-src/` codebas
 
 ---
 
-## 7. Phase 2: `qdma_perf_mon.v` — hardware performance measurement IP
+## 7. Initial custom IP block (`qdma_app_2`) — Streaming-mode loopback and first benchmarking pass
+
+**Vivado project:** `qdma_app_2` (Zynq UltraScale+ ZCU106 as EP, Jetson
+Orin Nano as RC).
+
+**Context:** with the driver ported, a functional FPGA design was
+needed to actually exercise DMA transfers. Building a custom Verilog
+module/IP block for QDMA from scratch was attempted first and
+abandoned — correctly implementing the QDMA AXI4-Stream handshaking
+protocol from scratch proved too complex. The approach was revised to
+start from Xilinx's QDMA example design and strip it down to a minimal
+custom IP block instead. The archived project confirms this design is
+built around Vivado's `axi_bram_ctrl`/`blk_mem_gen` IP rather than a
+from-scratch datapath.
+
+**Capabilities:**
+- Supports Streaming (ST) mode DMA transfers in both H2C and C2H
+  directions.
+- Memory-Mapped (MM) mode was not yet supported at this stage (added
+  later in `qdma_perf_mon.v`, section 8).
+- Exposes dedicated hardware ports for latency measurement: `lat_min`,
+  `lat_max`, `lat_accum`, `lat_current`, `lat_pkt_cnt`. This is the
+  direct predecessor of the register-mapped latency counters in
+  `qdma_perf_mon.v`.
+
+**Benchmark methodology:** automated Python scripts varied packet size
+and recorded latency and throughput over 100 runs per packet size, for
+two loopback scenarios.
+
+### 7.1 Streaming H2C → C2H (Orin → FPGA → Orin)
+
+Jetson sends via an H2C queue; the FPGA immediately returns the data
+via a C2H queue.
+
+| Metric | Result |
+|--------|--------|
+| Average latency | ~30–60 µs (increasing with packet size) |
+| Peak combined throughput | ~4 Gbps (at larger packet sizes) |
+| Timeout rate | ~20% of runs |
+| Max stable packet size | ~16,384 bytes |
+
+The timeout rate is attributed to the continuous-fire throughput-test
+methodology, which can overflow the descriptor ring during sustained
+high-rate transfers. Throughput was also observed to improve
+noticeably when the display was in sleep mode.
+
+### 7.2 Streaming C2H → H2C (FPGA → Orin → FPGA)
+
+The FPGA initiates, sending via a C2H queue; the host returns the data
+via an H2C queue.
+
+| Metric | Result |
+|--------|--------|
+| Average latency | 11–12 ms (2–3 orders of magnitude higher than 7.1) |
+| Peak combined throughput | ~175 Mbps |
+| Timeout rate | 0% — 100% success across all packet sizes |
+| Max stable packet size | ~65,536 bytes |
+
+**Analysis:** the latency asymmetry between 7.1 and 7.2 is attributed
+to host-side software overhead rather than the PCIe link itself. In
+the H2C→C2H direction the host initiates the transfer, so latency is
+dominated by the PCIe transaction time. In the C2H→H2C direction the
+host must service an incoming DMA completion interrupt, process it
+through the Linux kernel driver stack, and only then initiate the
+outbound transfer — a chain of operations that adds millisecond-scale
+overhead. This finding directly motivated moving latency measurement
+into FPGA hardware counters in `qdma_perf_mon.v` (section 8), removing
+host-side interrupt-service overhead as a measurement confound.
+
+---
+
+## 8. Phase 2: `qdma_perf_mon.v` — hardware performance measurement IP
 
 A custom Verilog IP (`rtl/qdma_perf_mon.v`) was written to measure DMA throughput and latency for all four QDMA channel types (ST H2C, ST C2H, MM H2C, MM C2H) directly in FPGA fabric, without relying on software-side timing.
 
@@ -255,7 +334,7 @@ Latency counters are 48-bit (free-running at FPGA clock frequency, ~33-hour wrap
 
 ---
 
-## 8. Phase 2 hardware test results
+## 9. Phase 2 hardware test results
 
 Tested on Zynq UltraScale+ ZCU106 (EP) + Jetson Orin Nano (RC). Three of the four channels completed; ST C2H failed.
 
@@ -270,6 +349,6 @@ A subsequent test (v2) produced a PCIe error in `dmesg` (`AER: Uncorrected (Fata
 
 ---
 
-## 9. Hardware platform change — work unfinished
+## 10. Hardware platform change — work unfinished
 
 After the ZCU106 was retired, work was attempted on a new hardware platform (Xilinx Versal VCK190 as EP, Nvidia Jetson NX as RC). The VCK190 could not be made to appear in `lspci` at all during the internship period. This work is unfinished and the PCIe enumeration problem was not resolved before the end of the internship.
