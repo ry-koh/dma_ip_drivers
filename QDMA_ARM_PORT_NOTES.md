@@ -18,8 +18,7 @@ generations to exercise and then measure the link: an initial
 Streaming-mode loopback design (`qdma_app_2`, section 7) validated with
 host-side Python timing, followed by a hardware performance-counter IP
 (`qdma_perf_mon.v`, section 8) that measured all four QDMA channel
-types directly in fabric. Sections 7–8 draw on the results reported in
-the EG3611A interim report (reporting period 5 Jan – 22 May 2026).
+types directly in fabric.
 
 These five commits represent the complete diff between this fork's
 `master` branch and the last synced point with the Xilinx (AMD) upstream
@@ -245,10 +244,19 @@ from-scratch datapath.
   `lat_max`, `lat_accum`, `lat_current`, `lat_pkt_cnt`. This is the
   direct predecessor of the register-mapped latency counters in
   `qdma_perf_mon.v`.
+- On the C2H side, the `ST_c2h` module implements a data generator that
+  produces an incrementing 16-bit pattern across the 128-bit data bus,
+  with the FPGA's free-running cycle counter injected into the lowest
+  32 bits of each beat to enable per-beat latency measurement.
+- The latency statistics registers are exposed via an AXI-Lite control
+  interface at BAR2. Register map: `0x00` queue ID, `0x04` C2H packet
+  size, `0x08` control (bit 1 arms the C2H generator), `0x20` packet
+  count, `0x84` descriptor buffer size.
 
 **Benchmark methodology:** automated Python scripts varied packet size
 and recorded latency and throughput over 100 runs per packet size, for
-two loopback scenarios.
+two loopback scenarios, plus a dedicated pure-C2H sustained-throughput
+test (7.3).
 
 ### 7.1 Streaming H2C → C2H (Orin → FPGA → Orin)
 
@@ -289,6 +297,37 @@ outbound transfer — a chain of operations that adds millisecond-scale
 overhead. This finding directly motivated moving latency measurement
 into FPGA hardware counters in `qdma_perf_mon.v` (section 8), removing
 host-side interrupt-service overhead as a measurement confound.
+
+### 7.3 Pure C2H sustained-throughput test — bottleneck diagnosis
+
+A dedicated test was built to characterize maximum sustained C2H
+throughput without H2C return-path overhead. The initial Python-based
+result was only **~175 Mbps**, which initially looked like a hardware
+or PCIe configuration constraint. Systematic investigation instead
+found three independent **software** bottlenecks, resolved in
+sequence:
+
+1. **Descriptor ring size** — the default of 64 entries was increased
+   to 16,384 via `idx_ringsz 15`.
+2. **Register-write path** — `dma-ctl` subprocess invocations for
+   register writes were replaced with direct memory-mapped BAR2 access
+   via `mmap` on `/dev/mem`, cutting per-write overhead from ~10 ms to
+   nanoseconds.
+3. **Test-harness language** — the test application was rewritten in C
+   to eliminate Python interpreter overhead.
+
+The buffer-size register (`0x84`) was also reconfigured to match the
+frame size, correcting the descriptor credit calculation.
+
+**Result:** after all three fixes, sustained C2H throughput reached
+**~22 Gbps**, peaking at **~23 Gbps** at 32,768-byte frame sizes —
+consistent with the theoretical bandwidth ceiling of the PCIe Gen3 x4
+link used on this platform. Measurements showed a bimodal distribution
+clustering around 16 Gbps and 24 Gbps, attributed to PCIe credit-based
+flow-control burst behavior. The 175 Mbps → 22 Gbps improvement was
+achieved entirely through software/test-infrastructure changes, with
+no hardware or RTL modifications — a reminder that a measurement
+setup can itself be the bottleneck it's trying to characterize.
 
 ---
 
